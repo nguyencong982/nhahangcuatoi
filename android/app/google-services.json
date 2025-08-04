@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "1096129874429",
+    "project_id": "tik-clone-f03b1",
+    "storage_bucket": "tik-clone-f03b1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1096129874429:android:797802013c27ac4b3bf194",
+        "android_client_info": {
+          "package_name": "com.example.menufood"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1096129874429-e09ukirh1kr4akhank6nk8utk9mn45nc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.menufood",
+            "certificate_hash": "ec27a5011ff15458542b32478d96d454d136d4da"
+          }
+        },
+        {
+          "client_id": "1096129874429-r1vnnln1ea1ogg7bqh3i3fc83qrc70nn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyADDKfWY1s18qVUxr7ghaKK-Zy-6XzjXiA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1096129874429-r1vnnln1ea1ogg7bqh3i3fc83qrc70nn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1096129874429-4lf7mvgj03dqvccn0fsa4icdoo7dm5c8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.untitledtik"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
