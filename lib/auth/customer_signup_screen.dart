@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:menufood/home/customer_home_screen.dart';
+import 'package:menufood/welcome/choice_screen.dart';
 
 class CustomerSignupScreen extends StatefulWidget {
   final String? initialEmail;
@@ -56,7 +56,7 @@ class _CustomerSignupScreenState extends State<CustomerSignupScreen> {
       );
       if (mounted) {
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const CustomerHomeScreen()),
+          MaterialPageRoute(builder: (context) => const ChoiceScreen()),
         );
       }
     } on FirebaseAuthException catch (e) {

@@ -35,7 +35,8 @@ class _ManagerVoucherScreenState extends State<ManagerVoucherScreen> {
         centerTitle: true,
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore.collection('vouchers').snapshots(),
+        // Lọc để chỉ hiển thị các voucher chưa bị xóa
+        stream: _firestore.collection('vouchers').where('isDeleted', isEqualTo: false).snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: primaryOrangeColor));
@@ -121,19 +122,16 @@ class _ManagerVoucherScreenState extends State<ManagerVoucherScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: Text('Xác nhận xóa', style: GoogleFonts.poppins()),
-          content: Text(
-            'Bạn có chắc chắn muốn xóa voucher "${voucher.code}"?',
-            style: GoogleFonts.poppins(),
-          ),
+          title: const Text("Xác nhận xóa"),
+          content: Text("Bạn có chắc chắn muốn xóa voucher \"${voucher.code}\"?"),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: Text('Hủy', style: GoogleFonts.poppins(color: Colors.grey)),
+              child: const Text("Hủy"),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: Text('Xóa', style: GoogleFonts.poppins(color: Colors.red)),
+              child: const Text("Xóa", style: TextStyle(color: Colors.red)),
             ),
           ],
         );
@@ -145,24 +143,19 @@ class _ManagerVoucherScreenState extends State<ManagerVoucherScreen> {
         await _firestore.collection('vouchers').doc(voucher.id).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Đã xóa voucher "${voucher.code}"', style: GoogleFonts.poppins()),
-              backgroundColor: Colors.green,
-            ),
+            SnackBar(content: Text("Đã xóa voucher \"${voucher.code}\"")),
           );
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Lỗi khi xóa voucher: $e', style: GoogleFonts.poppins()),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text("Lỗi khi xóa voucher: $e")),
           );
         }
       }
     }
   }
+
 }
 
 class _VoucherCard extends StatelessWidget {
@@ -181,9 +174,23 @@ class _VoucherCard extends StatelessWidget {
     String discountText = '';
     if (voucher.discountType == 'percentage') {
       discountText = 'Giảm ${voucher.discountAmount.toInt()}%';
+      if (voucher.maxDiscountAmount != null) {
+        discountText += ' (Tối đa ${NumberFormat.simpleCurrency(locale: 'vi_VN', decimalDigits: 0).format(voucher.maxDiscountAmount)})';
+      }
     } else {
-      final formatCurrency = NumberFormat.simpleCurrency(locale: 'vi_VN');
+      final formatCurrency = NumberFormat.simpleCurrency(locale: 'vi_VN', decimalDigits: 0);
       discountText = 'Giảm ${formatCurrency.format(voucher.discountAmount)}';
+    }
+
+    String voucherType = '';
+    if (voucher.isForShipping) {
+      voucherType = 'Voucher phí ship';
+    } else if (voucher.type == 'delivery') {
+      voucherType = 'Chỉ áp dụng cho đặt món về nhà';
+    } else if (voucher.type == 'dine_in') {
+      voucherType = 'Chỉ áp dụng cho ăn tại quán';
+    } else {
+      voucherType = 'Áp dụng cho mọi hình thức';
     }
 
     return Card(
@@ -240,6 +247,22 @@ class _VoucherCard extends StatelessWidget {
             ),
             const SizedBox(height: 5),
             Text(
+              'Áp dụng: $voucherType',
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              'Ngày bắt đầu: ${DateFormat('dd/MM/yyyy').format(voucher.startDate.toDate())}',
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
               'Hạn sử dụng: ${DateFormat('dd/MM/yyyy').format(voucher.endDate.toDate())}',
               style: GoogleFonts.poppins(
                 fontSize: 14,
@@ -269,6 +292,7 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
   final _descriptionController = TextEditingController();
   final _discountAmountController = TextEditingController();
   final _minOrderAmountController = TextEditingController();
+  final _maxDiscountAmountController = TextEditingController(); // Thêm controller mới
 
   String _discountType = 'percentage';
   bool _isForShipping = false;
@@ -284,6 +308,7 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
       _descriptionController.text = widget.voucher!.description;
       _discountAmountController.text = widget.voucher!.discountAmount.toString();
       _minOrderAmountController.text = widget.voucher!.minOrderAmount?.toString() ?? '';
+      _maxDiscountAmountController.text = widget.voucher!.maxDiscountAmount?.toString() ?? '';
       _discountType = widget.voucher!.discountType;
       _isForShipping = widget.voucher!.isForShipping;
       _type = widget.voucher!.type;
@@ -298,6 +323,7 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
     _descriptionController.dispose();
     _discountAmountController.dispose();
     _minOrderAmountController.dispose();
+    _maxDiscountAmountController.dispose();
     super.dispose();
   }
 
@@ -328,10 +354,12 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
           'discountType': _discountType,
           'discountAmount': double.tryParse(_discountAmountController.text) ?? 0.0,
           'minOrderAmount': double.tryParse(_minOrderAmountController.text) ?? 0.0,
+          'maxDiscountAmount': double.tryParse(_maxDiscountAmountController.text),
           'isForShipping': _isForShipping,
           'type': _type,
           'startDate': Timestamp.fromDate(_startDate),
           'endDate': Timestamp.fromDate(_endDate),
+          'isDeleted': false, // Mặc định là false khi tạo/cập nhật
         };
 
         if (widget.voucher == null) {
@@ -458,6 +486,17 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
                 ),
               ),
               const SizedBox(height: 10),
+              if (_discountType == 'percentage')
+                TextFormField(
+                  controller: _maxDiscountAmountController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: 'Giá trị giảm tối đa (tùy chọn)',
+                    labelStyle: GoogleFonts.poppins(),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              const SizedBox(height: 10),
               SwitchListTile(
                 title: Text('Áp dụng cho phí ship', style: GoogleFonts.poppins()),
                 value: _isForShipping,
@@ -518,7 +557,7 @@ class _VoucherFormDialogState extends State<_VoucherFormDialog> {
                     ),
                   ),
                 ],
-              ),
+              )
             ],
           ),
         ),

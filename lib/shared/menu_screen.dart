@@ -12,14 +12,16 @@ import 'package:menufood/orders/order_tracking_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
+import 'package:menufood/qr_scanner_screen.dart';
+import 'package:intl/intl.dart';
 
 class MenuScreen extends StatefulWidget {
-  final String restaurantId;
+  final String? restaurantId;
   final String? tableNumber;
 
   const MenuScreen({
     super.key,
-    required this.restaurantId,
+    this.restaurantId,
     this.tableNumber,
   });
 
@@ -36,27 +38,30 @@ class _MenuScreenState extends State<MenuScreen> {
 
   String? _activeOrderId;
   StreamSubscription<QuerySnapshot>? _orderSubscription;
+  StreamSubscription<QuerySnapshot>? _menuItemsSubscription;
+
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _hasNotifiedOrderReady = false;
   bool _showOrderReadyBanner = false;
 
+  final currencyFormatter = NumberFormat('#,##0', 'vi_VN');
+
   @override
   void initState() {
     super.initState();
-    print('MenuScreen initState: restaurantId=${widget.restaurantId}, tableNumber=${widget.tableNumber}');
     _fetchMenuData();
     _setupOrderListener();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<CartProvider>(context, listen: false).setRestaurantAndTable(
-        widget.restaurantId,
-        widget.tableNumber,
-      );
-    });
+    if (widget.restaurantId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Provider.of<CartProvider>(context, listen: false).setRestaurantForDelivery(widget.restaurantId!);
+      });
+    }
   }
 
   @override
   void dispose() {
     _orderSubscription?.cancel();
+    _menuItemsSubscription?.cancel();
     _stopNotificationSoundAndVibration();
     _audioPlayer.dispose();
     super.dispose();
@@ -65,11 +70,9 @@ class _MenuScreenState extends State<MenuScreen> {
   void _stopNotificationSoundAndVibration() {
     _audioPlayer.stop();
     Vibration.cancel();
-    print("New order notification sound and vibration stopped.");
   }
 
   Future<void> _playNewOrderNotification() async {
-    print("Playing new order notification...");
     if (await Vibration.hasVibrator() ?? false) {
       Vibration.vibrate(duration: 1000000, pattern: [0, 1000, 1000], repeat: 0);
     }
@@ -78,9 +81,11 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   void _setupOrderListener() {
+    _orderSubscription?.cancel();
+    _orderSubscription = null;
+
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      print("Order Listener: User is null.");
       setState(() {
         _activeOrderId = null;
         _showOrderReadyBanner = false;
@@ -88,15 +93,12 @@ class _MenuScreenState extends State<MenuScreen> {
       return;
     }
     if (widget.tableNumber == null || widget.tableNumber!.isEmpty) {
-      print("Order Listener: tableNumber is null or empty. Cannot track dine-in order.");
       setState(() {
         _activeOrderId = null;
         _showOrderReadyBanner = false;
       });
       return;
     }
-
-    print("Order Listener: Listening for user ${user.uid} at table ${widget.tableNumber}");
 
     final q = FirebaseFirestore.instance.collection('orders')
         .where('userId', isEqualTo: user.uid)
@@ -113,7 +115,6 @@ class _MenuScreenState extends State<MenuScreen> {
 
         setState(() {
           _activeOrderId = newOrderId;
-          print("Active Dine-in Order Found: $_activeOrderId");
         });
 
         if (newOrder.status == 'ready' && !_hasNotifiedOrderReady) {
@@ -158,18 +159,13 @@ class _MenuScreenState extends State<MenuScreen> {
       } else {
         setState(() {
           _activeOrderId = null;
-          print("No Active Dine-in Order Found.");
         });
         if (_hasNotifiedOrderReady) {
           _stopNotificationSoundAndVibration();
-          setState(() {
-            _hasNotifiedOrderReady = false;
-            _showOrderReadyBanner = false;
-          });
+          _hasNotifiedOrderReady = false;
         }
       }
     }, onError: (error) {
-      print("Lỗi lắng nghe đơn hàng đang hoạt động: $error");
       setState(() {
         _errorMessage = 'Lỗi lắng nghe đơn hàng: $error';
         _activeOrderId = null;
@@ -184,9 +180,18 @@ class _MenuScreenState extends State<MenuScreen> {
 
   Future<void> _fetchMenuData() async {
     try {
+      final restaurantId = widget.restaurantId;
+      if (restaurantId == null || restaurantId.isEmpty) {
+        setState(() {
+          _errorMessage = 'Không có ID nhà hàng được cung cấp.';
+          _isLoading = false;
+        });
+        return;
+      }
+
       final restaurantDoc = await FirebaseFirestore.instance
           .collection('restaurants')
-          .doc(widget.restaurantId)
+          .doc(restaurantId)
           .get();
 
       if (!restaurantDoc.exists) {
@@ -194,14 +199,14 @@ class _MenuScreenState extends State<MenuScreen> {
           _errorMessage = 'Không tìm thấy nhà hàng này.';
           _isLoading = false;
         });
-        print("Restaurant not found: ${widget.restaurantId}");
         return;
       }
 
       _restaurant = Restaurant.fromFirestore(restaurantDoc);
-      print("Restaurant loaded: ${_restaurant!.name}");
 
       final categoriesSnapshot = await FirebaseFirestore.instance
+          .collection('restaurants')
+          .doc(restaurantId)
           .collection('categories')
           .orderBy('order')
           .get();
@@ -214,33 +219,53 @@ class _MenuScreenState extends State<MenuScreen> {
         }
       }
       _categories = fetchedCategories;
-      print("Fetched Categories for Dine-in: ${_categories.map((c) => c.name).join(', ')}");
 
-      final menuItemsSnapshot = await FirebaseFirestore.instance
+      _menuItemsSubscription?.cancel();
+
+      _menuItemsSubscription = FirebaseFirestore.instance
+          .collection('restaurants')
+          .doc(restaurantId)
           .collection('menuItems')
-          .get();
+          .snapshots()
+          .listen((snapshot) {
 
-      _menuItems = menuItemsSnapshot.docs
-          .map((doc) => MenuItem.fromFirestore(doc))
-          .toList();
-      print("Fetched Menu Items count: ${_menuItems.length}");
+        final updatedMenuItems = snapshot.docs
+            .map((doc) => MenuItem.fromFirestore(doc))
+            .toList();
 
-      setState(() {
-        _isLoading = false;
+        setState(() {
+          _menuItems = updatedMenuItems;
+          if (_isLoading) {
+            _isLoading = false;
+          }
+        });
+
+      }, onError: (e) {
+
+        setState(() {
+          _errorMessage = 'Lỗi lắng nghe menu: $e';
+          _isLoading = false;
+        });
+        print('LỖI LẮNG NGHE MENU FIRESTORE: $e');
       });
+
+      if (_isLoading && mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+
     } catch (e) {
       setState(() {
-        _errorMessage = 'Lỗi tải menu: $e';
+        _errorMessage = 'Lỗi tải dữ liệu: $e';
         _isLoading = false;
       });
-      print("Error fetching menu data: $e");
+      print('LỖI TẢI MENU FIRESTORE: $e');
     }
   }
 
   List<MenuItem> _getItemsForCategory(String categoryId) {
-    final items = _menuItems.where((item) => item.categoryId == categoryId).toList();
-    print("Items for category $categoryId: ${items.length} items");
-    return items;
+    return _menuItems.where((item) => item.categoryId == categoryId).toList();
   }
 
 
@@ -280,8 +305,6 @@ class _MenuScreenState extends State<MenuScreen> {
       );
     }
 
-    print("Building MenuScreen. Categories count: ${_categories.length}");
-
     if (_categories.isEmpty) {
       return Scaffold(
         appBar: AppBar(
@@ -320,10 +343,13 @@ class _MenuScreenState extends State<MenuScreen> {
           ),
         ),
         body: Center(
-          child: Text(
-            'Không có danh mục món ăn nào khả dụng cho ăn tại quán. Vui lòng kiểm tra cài đặt danh mục trong Admin Dashboard.',
-            style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey[700]),
-            textAlign: TextAlign.center,
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Text(
+              'Menu/Danh mục chưa được thiết lập cho nhà hàng này, hoặc không có danh mục nào khả dụng cho ăn tại quán (Dine-In).',
+              style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey[700]),
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
       );
@@ -376,7 +402,6 @@ class _MenuScreenState extends State<MenuScreen> {
                 labelColor: Colors.white,
                 unselectedLabelColor: Colors.white70,
                 tabs: _categories.map((c) {
-                  print("Building Tab for category: ${c.name}");
                   return Tab(text: c.name);
                 }).toList(),
               ),
@@ -397,8 +422,8 @@ class _MenuScreenState extends State<MenuScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.purple, size: 28),
-                    SizedBox(width: 10),
+                    const Icon(Icons.check_circle, color: Colors.purple, size: 28),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -422,7 +447,7 @@ class _MenuScreenState extends State<MenuScreen> {
                       ),
                     ),
                     IconButton(
-                      icon: Icon(Icons.arrow_forward_ios, color: Colors.purple),
+                      icon: const Icon(Icons.arrow_forward_ios, color: Colors.purple),
                       onPressed: () {
                         if (_activeOrderId != null) {
                           Navigator.of(context).push(
@@ -440,7 +465,6 @@ class _MenuScreenState extends State<MenuScreen> {
             Expanded(
               child: TabBarView(
                 children: _categories.map((category) {
-                  print("Building TabBarView content for category: ${category.name}");
                   final itemsForCategory = _getItemsForCategory(category.id);
                   if (itemsForCategory.isEmpty) {
                     return Center(
@@ -455,6 +479,14 @@ class _MenuScreenState extends State<MenuScreen> {
                     itemCount: itemsForCategory.length,
                     itemBuilder: (context, index) {
                       final item = itemsForCategory[index];
+
+                      // 💡 LOGIC TÍNH GIÁ SAU GIẢM GIÁ ĐÃ THÊM VÀO
+                      final int? discount = item.discountPercentage;
+                      final double originalPrice = item.price;
+                      final double finalPrice = discount != null && discount > 0
+                          ? originalPrice * (1 - discount / 100)
+                          : originalPrice;
+
                       return Card(
                         margin: const EdgeInsets.symmetric(vertical: 8.0),
                         elevation: 4,
@@ -464,18 +496,46 @@ class _MenuScreenState extends State<MenuScreen> {
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if ((item.imageUrl).isNotEmpty)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8.0),
-                                  child: CachedNetworkImage(
-                                    imageUrl: item.imageUrl,
-                                    width: 80,
-                                    height: 80,
-                                    fit: BoxFit.cover,
-                                    placeholder: (context, url) => const CircularProgressIndicator(),
-                                    errorWidget: (context, url, error) => const Icon(Icons.fastfood),
-                                  ),
-                                ),
+                              Stack(
+                                children: [
+                                  if ((item.imageUrl).isNotEmpty)
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8.0),
+                                      child: CachedNetworkImage(
+                                        imageUrl: item.imageUrl,
+                                        width: 80,
+                                        height: 80,
+                                        fit: BoxFit.cover,
+                                        placeholder: (context, url) => const CircularProgressIndicator(),
+                                        errorWidget: (context, url, error) => const Icon(Icons.fastfood),
+                                      ),
+                                    ),
+                                  // 💡 HIỂN THỊ NHÃN GIẢM GIÁ
+                                  if (discount != null && discount > 0)
+                                    Positioned(
+                                      top: 0,
+                                      left: 0,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade700,
+                                          borderRadius: const BorderRadius.only(
+                                            topLeft: Radius.circular(8.0),
+                                            bottomRight: Radius.circular(8.0),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '-$discount%',
+                                          style: GoogleFonts.poppins(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
@@ -486,6 +546,23 @@ class _MenuScreenState extends State<MenuScreen> {
                                       style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
                                     ),
                                     const SizedBox(height: 4),
+                                    if (item.totalReviews > 0)
+                                      Row(
+                                        children: [
+                                          const Icon(Icons.star, color: Colors.amber, size: 16),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            '${item.averageRating.toStringAsFixed(1)} (${item.totalReviews})',
+                                            style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[700]),
+                                          ),
+                                        ],
+                                      )
+                                    else
+                                      Text(
+                                        'Chưa có đánh giá',
+                                        style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey),
+                                      ),
+                                    const SizedBox(height: 4),
                                     Text(
                                       item.description ?? '',
                                       style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey[600]),
@@ -493,14 +570,27 @@ class _MenuScreenState extends State<MenuScreen> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     const SizedBox(height: 8),
+
+                                    // 💡 HIỂN THỊ GIÁ CŨ (NẾU CÓ GIẢM GIÁ)
+                                    if (discount != null && discount > 0)
+                                      Text(
+                                        '${currencyFormatter.format(originalPrice)} VNĐ',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 14,
+                                          color: Colors.grey,
+                                          decoration: TextDecoration.lineThrough,
+                                        ),
+                                      ),
+                                    // 💡 HIỂN THỊ GIÁ MỚI (SAU GIẢM GIÁ)
                                     Text(
-                                      '${item.price.toStringAsFixed(0)} VNĐ',
+                                      '${currencyFormatter.format(finalPrice)} VNĐ',
                                       style: GoogleFonts.poppins(
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
-                                        color: Colors.deepOrange,
+                                        color: discount != null && discount > 0 ? Colors.green.shade700 : Colors.deepOrange,
                                       ),
                                     ),
+
                                     if (!item.isAvailable)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 4.0),
@@ -580,19 +670,21 @@ class _MenuScreenState extends State<MenuScreen> {
                     ? FloatingActionButton.extended(
                   onPressed: () {
                     if (widget.tableNumber != null && widget.tableNumber!.isNotEmpty) {
+
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => DineInCartScreen(
-                            restaurantId: widget.restaurantId,
+                            restaurantId: widget.restaurantId!,
                             tableNumber: widget.tableNumber,
                           ),
                         ),
                       );
                     } else {
+
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => CartScreen(
-                            restaurantId: widget.restaurantId,
+                            restaurantId: widget.restaurantId!,
                           ),
                         ),
                       );
@@ -600,7 +692,7 @@ class _MenuScreenState extends State<MenuScreen> {
                   },
                   icon: const Icon(Icons.shopping_cart),
                   label: Text(
-                    'Xem Giỏ Hàng (${cart.itemCount} món - ${cart.totalAmount.toStringAsFixed(0)} VNĐ)',
+                    'Xem Giỏ Hàng (${cart.itemCount} món - ${currencyFormatter.format(cart.totalAmount)} VNĐ)',
                     style: GoogleFonts.poppins(),
                   ),
                 )

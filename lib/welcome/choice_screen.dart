@@ -4,6 +4,8 @@ import 'package:menufood/qr_scanner_screen.dart';
 import 'package:menufood/home/customer_home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:menufood/auth/customer_login_screen.dart';
+import 'package:menufood/home/nearby_screen.dart';
+import 'package:menufood/shared/models.dart';
 
 class ChoiceScreen extends StatefulWidget {
   const ChoiceScreen({super.key});
@@ -32,6 +34,28 @@ class _ChoiceScreenState extends State<ChoiceScreen> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Lỗi khi đăng xuất: ${e.toString()}')),
+      );
+    }
+  }
+
+  Future<void> _handleDeliveryOrderFlow() async {
+    final selectedRestaurant = await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const NearbyScreen(),
+      ),
+    );
+
+    if (selectedRestaurant != null && selectedRestaurant is Restaurant && mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => CustomerHomeScreen(
+            initialRestaurant: selectedRestaurant,
+          ),
+        ),
+      );
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Vui lòng chọn một nhà hàng để tiếp tục đặt món.')),
       );
     }
   }
@@ -95,11 +119,7 @@ class _ChoiceScreenState extends State<ChoiceScreen> {
                 context,
                 icon: Icons.delivery_dining,
                 text: 'Đặt món qua ứng dụng',
-                onPressed: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (context) => const CustomerHomeScreen()),
-                  );
-                },
+                onPressed: _handleDeliveryOrderFlow,
               ),
 
               const SizedBox(height: 20),

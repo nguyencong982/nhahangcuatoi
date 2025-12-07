@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+/functions/node_modules/
+/revenue-service/node_modules/
+/package-lock.json
+/npm-debug.log

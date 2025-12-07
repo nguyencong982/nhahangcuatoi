@@ -1,6 +1,6 @@
 buildscript {
     // Để khai báo biến trong Kotlin DSL, bạn dùng `val`
-    val kotlin_version by extra("1.9.0") // Hoặc phiên bản Kotlin hiện tại của bạn
+    val kotlin_version by extra("2.2.0") // Hoặc phiên bản Kotlin hiện tại của bạn
 
     repositories {
         google()

@@ -6,7 +6,14 @@ import 'package:flutter/gestures.dart';
 import 'dart:math';
 import 'customer_forgot_password_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:menufood/welcome/choice_screen.dart';
+import 'package:menufood/home/shipper_home_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:menufood/home/customer_home_screen.dart';
+import 'package:menufood/admin/admin_dashboard_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
 class CustomerLoginScreen extends StatefulWidget {
   const CustomerLoginScreen({super.key});
@@ -25,6 +32,9 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
   late AnimationController _swayAnimationController;
   late AnimationController _entryAnimationController;
 
+  List<String> _previousEmails = [];
+  static const String _emailKey = 'previousCustomerEmails';
+
   final List<String> _overlappingImages = [
     'assets/images/30-mon-ngon-nuc-long-nhat-dinh-phai-thu-khi-toi-ha-noi-phan-1.webp',
     'assets/images/bao-gia-chup-mon-an-dich-vu-chup-anh-do-an-chuyen-nghiep-4.jpg',
@@ -40,6 +50,8 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
   @override
   void initState() {
     super.initState();
+    _loadPreviousEmails();
+
     _swayAnimationController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 4),
@@ -51,6 +63,41 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
       duration: const Duration(milliseconds: 3500),
     );
     _entryAnimationController.forward();
+  }
+
+  Future<void> _loadPreviousEmails() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _previousEmails = prefs.getStringList(_emailKey) ?? [];
+        if (_previousEmails.isNotEmpty) {
+          _emailController.text = _previousEmails.first;
+        }
+      });
+    } catch (e) {
+      print('Lỗi khi tải email đã lưu: $e');
+    }
+  }
+
+  Future<void> _saveEmail(String email) async {
+    if (email.isEmpty) return;
+
+    final normalizedEmail = email.trim().toLowerCase();
+
+    _previousEmails.remove(normalizedEmail);
+
+    _previousEmails.insert(0, normalizedEmail);
+
+    if (_previousEmails.length > 5) {
+      _previousEmails = _previousEmails.sublist(0, 5);
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_emailKey, _previousEmails);
+    } catch (e) {
+      print('Lỗi khi lưu email mới: $e');
+    }
   }
 
   @override
@@ -70,24 +117,70 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
     });
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      UserCredential userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const ChoiceScreen()),
-        );
+
+      User? user = userCredential.user;
+      if (user != null) {
+        await _saveEmail(_emailController.text);
+
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+
+        if (userDoc.exists && userDoc.data() is Map<String, dynamic>) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          String role = userData['role'] ?? 'customer';
+          bool isDeleted = userData['isDeleted'] ?? false;
+
+          if (isDeleted) {
+            await FirebaseAuth.instance.signOut();
+            throw FirebaseAuthException(
+              code: 'account-disabled',
+              message: 'Tài khoản này đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.',
+            );
+          }
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('userRole', role);
+
+          if (mounted) {
+            if (role == 'admin' || role == 'superAdmin' || role == 'manager') {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+              );
+            }
+            else if (role == 'shipper') {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const ShipperHomeScreen()),
+              );
+            }
+            else {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const ChoiceScreen()),
+              );
+            }
+          }
+        } else {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            print('Không tìm thấy document hồ sơ (role) cho UID: ${user.uid}.');
+            setState(() {
+              _errorMessage = 'Thông tin người dùng không hợp lệ. (Thiếu hồ sơ vai trò)';
+            });
+          }
+        }
       }
     } on FirebaseAuthException catch (e) {
       String message;
-      if (e.code == 'user-not-found') {
-        message = 'Không tìm thấy tài khoản với email này. Vui lòng đăng ký.';
-      } else if (e.code == 'wrong-password') {
-        message = 'Mật khẩu không đúng.';
+      if (e.code == 'user-not-found' || e.code == 'wrong-password') {
+        message = 'Email hoặc mật khẩu không đúng.';
       } else if (e.code == 'invalid-email') {
         message = 'Địa chỉ email không hợp lệ.';
-      } else {
+      } else if (e.code == 'account-disabled') {
+        message = e.message!;
+      }
+      else {
         message = 'Lỗi đăng nhập: ${e.message}';
       }
       setState(() {
@@ -133,19 +226,76 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
         idToken: googleAuth.idToken,
       );
 
-      await FirebaseAuth.instance.signInWithCredential(credential);
+      UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
 
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (context) => const ChoiceScreen()),
-        );
+      User? user = userCredential.user;
+      if (user != null) {
+        if (user.email != null) {
+          await _saveEmail(user.email!);
+        }
+
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+
+        if (userDoc.exists && userDoc.data() is Map<String, dynamic>) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          String role = userData['role'] ?? 'customer';
+          bool isDeleted = userData['isDeleted'] ?? false;
+
+          if (isDeleted) {
+            await FirebaseAuth.instance.signOut();
+            throw FirebaseAuthException(
+              code: 'account-disabled',
+              message: 'Tài khoản này đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.',
+            );
+          }
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('userRole', role);
+
+          if (mounted) {
+            if (role == 'admin' || role == 'superAdmin' || role == 'manager') {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+              );
+            }
+            else if (role == 'shipper') {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const ShipperHomeScreen()),
+              );
+            }
+            else {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const ChoiceScreen()),
+              );
+            }
+          }
+        } else {
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'email': user.email,
+            'name': user.displayName ?? 'Người dùng mới',
+            'role': 'customer',
+            'isDeleted': false,
+          });
+
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('userRole', 'customer');
+
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const ChoiceScreen()),
+            );
+          }
+        }
       }
+
     } on FirebaseAuthException catch (e) {
       String message;
       if (e.code == 'account-exists-with-different-credential') {
         message = 'Tài khoản đã tồn tại với một phương thức đăng nhập khác.';
       } else if (e.code == 'invalid-credential') {
         message = 'Thông tin xác thực không hợp lệ từ Google.';
+      } else if (e.code == 'account-disabled') {
+        message = e.message!;
       } else {
         message = 'Lỗi đăng nhập Google: ${e.message}';
       }
@@ -164,13 +314,121 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
   }
 
   Future<void> _signInWithFacebook() async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Tích hợp Facebook sẽ được triển khai.')),
-    );
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final LoginResult result = await FacebookAuth.instance.login(
+        permissions: ['email', 'public_profile'],
+      );
+
+      if (result.status == LoginStatus.success) {
+        final AccessToken accessToken = result.accessToken!;
+
+        final AuthCredential credential = FacebookAuthProvider.credential(
+          accessToken.token,
+        );
+
+        UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
+
+        User? user = userCredential.user;
+        if (user != null) {
+          if (user.email != null) {
+            await _saveEmail(user.email!);
+          }
+
+          DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+
+          if (userDoc.exists && userDoc.data() is Map<String, dynamic>) {
+            final userData = userDoc.data() as Map<String, dynamic>;
+            String role = userData['role'] ?? 'customer';
+            bool isDeleted = userData['isDeleted'] ?? false;
+
+            if (isDeleted) {
+              await FirebaseAuth.instance.signOut();
+              throw FirebaseAuthException(
+                code: 'account-disabled',
+                message: 'Tài khoản này đã bị vô hiệu hóa. Vui lòng liên hệ quản trị viên.',
+              );
+            }
+
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('userRole', role);
+
+            if (mounted) {
+              if (role == 'admin' || role == 'superAdmin' || role == 'manager') {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+                );
+              }
+              else if (role == 'shipper') {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (context) => const ShipperHomeScreen()),
+                );
+              }
+              else {
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(builder: (context) => const ChoiceScreen()),
+                );
+              }
+            }
+          } else {
+            await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+              'email': user.email,
+              'name': user.displayName ?? 'Người dùng Facebook',
+              'role': 'customer',
+              'isDeleted': false,
+            });
+
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('userRole', 'customer');
+
+            if (mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const ChoiceScreen()),
+              );
+            }
+          }
+        }
+      } else if (result.status == LoginStatus.cancelled) {
+        setState(() {
+          _errorMessage = 'Đăng nhập Facebook bị hủy.';
+        });
+      } else if (result.status == LoginStatus.failed) {
+        throw Exception(result.message ?? "Lỗi đăng nhập Facebook không xác định.");
+      }
+    } on FirebaseAuthException catch (e) {
+      String message;
+      if (e.code == 'account-exists-with-different-credential') {
+        message = 'Tài khoản đã tồn tại với một phương thức đăng nhập khác.';
+      } else if (e.code == 'invalid-credential') {
+        message = 'Thông tin xác thực không hợp lệ từ Facebook.';
+      } else if (e.code == 'account-disabled') {
+        message = e.message!;
+      } else {
+        message = 'Lỗi đăng nhập Facebook: ${e.message}';
+      }
+      setState(() {
+        _errorMessage = message;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Đã xảy ra lỗi không xác định khi đăng nhập Facebook: $e';
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
+
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -179,7 +437,9 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.white),
           onPressed: () {
-            Navigator.of(context).pop();
+            if (mounted) {
+              SystemNavigator.pop();
+            }
           },
         ),
       ),
@@ -218,9 +478,12 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
                         double swayRotation = sin(animValue * 2 * pi / 2 + phase * 0.7) * 0.05;
                         double swayScale = 1 + sin(animValue * 2 * pi / 3 + phase * 0.9) * 0.01;
 
+                        double imageSize = 200;
+                        double centerX = (screenWidth / 2) - (imageSize / 2);
+
                         return Positioned(
-                          left: (MediaQuery.of(context).size.width * 0.5) - 100 + props['offset'].dx + swayX,
-                          top: (300 / 2) - 100 + props['offset'].dy + swayY + initialSlideOffset,
+                          left: centerX + props['offset'].dx + swayX,
+                          top: (300 / 2) - (imageSize / 2) + props['offset'].dy + swayY + initialSlideOffset,
                           child: Opacity(
                             opacity: opacity,
                             child: Transform.rotate(
@@ -232,13 +495,13 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
                                   child: Image.asset(
                                     _overlappingImages[index],
                                     fit: BoxFit.cover,
-                                    width: 200,
-                                    height: 200,
+                                    width: imageSize,
+                                    height: imageSize,
                                     errorBuilder: (context, error, stackTrace) {
                                       return Container(
                                         color: Colors.grey,
-                                        width: 200,
-                                        height: 200,
+                                        width: imageSize,
+                                        height: imageSize,
                                         child: const Center(
                                           child: Icon(Icons.broken_image, color: Colors.white, size: 50),
                                         ),
@@ -268,26 +531,88 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
               ),
               const SizedBox(height: 30),
 
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                style: const TextStyle(color: Colors.black),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.white,
-                  hintText: 'Địa chỉ email',
-                  hintStyle: GoogleFonts.poppins(color: Colors.grey[600]),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: Colors.blue, width: 2),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
+              Autocomplete<String>(
+                optionsBuilder: (TextEditingValue textEditingValue) {
+                  if (textEditingValue.text.isEmpty) {
+                    return _previousEmails;
+                  }
+                  return _previousEmails.where((String option) {
+                    return option.toLowerCase().contains(textEditingValue.text.toLowerCase());
+                  });
+                },
+                onSelected: (String selection) {
+                  _emailController.text = selection;
+                },
+                fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {
+                  if (_emailController.text.isNotEmpty && textEditingController.text.isEmpty) {
+                    textEditingController.text = _emailController.text;
+                  }
+
+                  if (textEditingController.text.isNotEmpty) {
+                    textEditingController.selection = TextSelection.fromPosition(
+                      TextPosition(offset: textEditingController.text.length),
+                    );
+                  }
+
+                  return TextField(
+                    controller: textEditingController,
+                    focusNode: focusNode,
+                    keyboardType: TextInputType.emailAddress,
+                    style: const TextStyle(color: Colors.black),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: Colors.white,
+                      hintText: 'Địa chỉ email',
+                      hintStyle: GoogleFonts.poppins(color: Colors.grey[600]),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Colors.deepOrange, width: 2),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    ),
+                    onChanged: (text) {
+                      _emailController.text = text;
+                    },
+                    onSubmitted: (_) => onFieldSubmitted(),
+                  );
+                },
+                optionsViewBuilder: (context, onSelected, options) {
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: Material(
+                      elevation: 8.0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      color: Colors.grey[850],
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: 200, maxWidth: screenWidth - 48),
+                        child: ListView.builder(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          itemCount: options.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final String option = options.elementAt(index);
+                            return InkWell(
+                              onTap: () => onSelected(option),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16.0),
+                                child: Text(
+                                  option,
+                                  style: GoogleFonts.poppins(color: Colors.white70),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
+
               const SizedBox(height: 20),
 
               TextField(
@@ -305,7 +630,7 @@ class _CustomerLoginScreenState extends State<CustomerLoginScreen> with TickerPr
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: Colors.blue, width: 2),
+                    borderSide: const BorderSide(color: Colors.deepOrange, width: 2),
                   ),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 ),

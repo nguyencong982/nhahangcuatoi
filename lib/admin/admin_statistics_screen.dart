@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class AdminStatisticsScreen extends StatefulWidget {
   const AdminStatisticsScreen({super.key});
@@ -12,7 +14,10 @@ class AdminStatisticsScreen extends StatefulWidget {
 }
 
 class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  static const String _cloudRunBaseUrl = 'https://revenue-service-1096129874429.us-central1.run.app';
+  static const String _apiEndpoint = '/api/v1/admin/revenue-report';
+  static const String _cloudRunUrl = '$_cloudRunBaseUrl$_apiEndpoint';
+
   double _totalRevenue = 0.0;
   bool _isLoading = false;
   String? _errorMessage;
@@ -31,6 +36,15 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
   }
 
   Future<void> _fetchRevenueAndTransactions() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      setState(() {
+        _errorMessage = 'Lỗi: Người dùng chưa đăng nhập.';
+        _isLoading = false;
+      });
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -40,83 +54,78 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
     });
 
     try {
-      Query<Map<String, dynamic>> query = _firestore.collection('orders');
-
-      query = query.where('status', isEqualTo: 'completed');
-
-      DateTime startPeriod;
-      DateTime endPeriod;
-
-      if (_selectedDay != null) {
-        startPeriod = DateTime(_selectedYear, _selectedMonth, _selectedDay!);
-        endPeriod = startPeriod.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1));
-      } else {
-        startPeriod = DateTime(_selectedYear, _selectedMonth, 1);
-        endPeriod = DateTime(_selectedYear, _selectedMonth + 1, 1).subtract(const Duration(milliseconds: 1));
+      final idToken = await user.getIdToken(true);
+      if (idToken == null) {
+        throw Exception('Không thể lấy ID Token hợp lệ.');
       }
 
-      query = query
-          .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startPeriod))
-          .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(endPeriod));
+      final response = await http.post(
+        Uri.parse(_cloudRunUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $idToken',
+        },
+        body: jsonEncode({
+          'year': _selectedYear,
+          'month': _selectedMonth,
+          'day': _selectedDay,
+        }),
+      );
 
-      final snapshot = await query.orderBy('timestamp', descending: true).get();
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final revenue = (data['totalRevenue'] as num).toDouble();
+        final dailyRevenueMapRaw = (data['dailyRevenueMap'] as Map<String, dynamic>);
 
-      double revenue = 0.0;
-      List<Map<String, dynamic>> fetchedTransactions = [];
-      Map<int, double> dailyRevenueMap = {};
+        final Map<int, double> dailyRevenueMap = dailyRevenueMapRaw.map(
+              (key, value) => MapEntry(int.parse(key), (value as num).toDouble()),
+        );
 
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final totalAmount = (data['totalAmount'] as num? ?? 0.0).toDouble();
-        final timestamp = (data['timestamp'] as Timestamp).toDate();
+        final fetchedTransactions = (data['transactionDetails'] as List)
+            .map((tx) => {
+          'id': tx['id'],
+          'itemsSummary': tx['itemsSummary'],
+          'totalAmount': (tx['totalAmount'] as num).toDouble(),
+          'timestamp': DateTime.parse(tx['timestamp']),
+        })
+            .toList();
 
-        revenue += totalAmount;
-
-        String itemsSummary = '';
-        if (data['items'] is List) {
-          for (var item in data['items']) {
-            itemsSummary += '${item['name']} x${item['quantity']} (${NumberFormat('#,##0', 'vi_VN').format((item['price'] as num).toDouble())} VNĐ)\n';
-          }
+        List<BarChartGroupData> barGroups = [];
+        int daysInMonth = DateUtils.getDaysInMonth(_selectedYear, _selectedMonth);
+        for (int i = 1; i <= daysInMonth; i++) {
+          barGroups.add(
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: dailyRevenueMap[i] ?? 0,
+                  color: Colors.blue,
+                  width: 8,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ],
+            ),
+          );
         }
 
-        fetchedTransactions.add({
-          'id': doc.id,
-          'itemsSummary': itemsSummary.trim(),
-          'totalAmount': totalAmount,
-          'timestamp': timestamp,
+        setState(() {
+          _totalRevenue = revenue;
+          _transactionDetails = fetchedTransactions;
+          _dailyRevenueData = barGroups;
+          _isLoading = false;
         });
-
-        int dayOfMonth = timestamp.day;
-        dailyRevenueMap.update(dayOfMonth, (value) => value + totalAmount, ifAbsent: () => totalAmount);
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        final errorData = jsonDecode(response.body);
+        final errorMsg = errorData['error'] ?? 'Lỗi không rõ khi xác thực.';
+        throw Exception('Lỗi truy cập (${response.statusCode}): $errorMsg. Vui lòng kiểm tra vai trò Admin.');
+      } else {
+        throw Exception('Lỗi HTTP ${response.statusCode}: ${response.reasonPhrase}');
       }
-
-      List<BarChartGroupData> barGroups = [];
-      int daysInMonth = DateUtils.getDaysInMonth(_selectedYear, _selectedMonth);
-      for (int i = 1; i <= daysInMonth; i++) {
-        barGroups.add(
-          BarChartGroupData(
-            x: i,
-            barRods: [
-              BarChartRodData(
-                toY: dailyRevenueMap[i] ?? 0,
-                color: Colors.blue,
-                width: 8,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ],
-          ),
-        );
-      }
-
-      setState(() {
-        _totalRevenue = revenue;
-        _transactionDetails = fetchedTransactions;
-        _dailyRevenueData = barGroups;
-        _isLoading = false;
-      });
     } catch (e) {
       setState(() {
-        _errorMessage = 'Lỗi tải thống kê: $e';
+        _errorMessage = e.toString().contains('Exception:')
+            ? e.toString().replaceFirst('Exception: ', '')
+            : 'Lỗi không xác định: $e';
         _isLoading = false;
       });
       print('Lỗi tải thống kê: $e');
@@ -128,7 +137,6 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
   }
 
   List<int> get _availableDaysInMonth {
-    if (_selectedMonth == null || _selectedYear == null) return [];
     int days = DateUtils.getDaysInMonth(_selectedYear, _selectedMonth);
     return List<int>.generate(days, (index) => index + 1);
   }
@@ -152,7 +160,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                     value: _selectedYear,
                     decoration: InputDecoration(labelText: 'Năm', labelStyle: GoogleFonts.poppins()),
                     items: _availableYears
-                        .map((year) => DropdownMenuItem(value: year, child: Text('$year', style: GoogleFonts.poppins())))
+                        .map((year) =>
+                        DropdownMenuItem(value: year, child: Text('$year', style: GoogleFonts.poppins())))
                         .toList(),
                     onChanged: (value) {
                       if (value != null) {
@@ -171,7 +180,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                     value: _selectedMonth,
                     decoration: InputDecoration(labelText: 'Tháng', labelStyle: GoogleFonts.poppins()),
                     items: List.generate(12, (index) => index + 1)
-                        .map((month) => DropdownMenuItem(value: month, child: Text('Tháng $month', style: GoogleFonts.poppins())))
+                        .map((month) => DropdownMenuItem(
+                        value: month, child: Text('Tháng $month', style: GoogleFonts.poppins())))
                         .toList(),
                     onChanged: (value) {
                       if (value != null) {
@@ -190,9 +200,11 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                     value: _selectedDay,
                     decoration: InputDecoration(labelText: 'Ngày', labelStyle: GoogleFonts.poppins()),
                     items: [
-                      DropdownMenuItem<int?>(value: null, child: Text('Tất cả ngày', style: GoogleFonts.poppins())),
+                      DropdownMenuItem<int?>(
+                          value: null, child: Text('Tất cả ngày', style: GoogleFonts.poppins())),
                       ..._availableDaysInMonth
-                          .map((day) => DropdownMenuItem(value: day, child: Text('$day', style: GoogleFonts.poppins())))
+                          .map((day) =>
+                          DropdownMenuItem(value: day, child: Text('$day', style: GoogleFonts.poppins())))
                           .toList(),
                     ],
                     onChanged: (value) {
@@ -206,7 +218,6 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
               ],
             ),
             const SizedBox(height: 20),
-
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -218,7 +229,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                 children: [
                   Text(
                     'Tổng doanh thu:',
-                    style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green[800]),
+                    style: GoogleFonts.poppins(
+                        fontSize: 20, fontWeight: FontWeight.bold, color: Colors.green[800]),
                   ),
                   const SizedBox(height: 10),
                   _isLoading
@@ -231,13 +243,15 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                   )
                       : Text(
                     '${NumberFormat('#,##0', 'vi_VN').format(_totalRevenue)} VNĐ',
-                    style: GoogleFonts.poppins(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.green[900]),
+                    style: GoogleFonts.poppins(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[900]),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 20),
-
             Text(
               'Doanh thu theo ngày',
               style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
@@ -264,7 +278,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                         getTitlesWidget: (value, meta) {
                           return Padding(
                             padding: const EdgeInsets.only(top: 8.0),
-                            child: Text(value.toInt().toString(), style: GoogleFonts.poppins(fontSize: 10)),
+                            child: Text(value.toInt().toString(),
+                                style: GoogleFonts.poppins(fontSize: 10)),
                           );
                         },
                         reservedSize: 20,
@@ -274,13 +289,16 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                       sideTitles: SideTitles(
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
-                          return Text('${value.toInt() ~/ 1000}K', style: GoogleFonts.poppins(fontSize: 10));
+                          return Text('${value.toInt() ~/ 1000}K',
+                              style: GoogleFonts.poppins(fontSize: 10));
                         },
                         reservedSize: 30,
                       ),
                     ),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles:
+                    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
                   ),
                   gridData: FlGridData(
                     show: true,
@@ -294,13 +312,15 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                   ),
                   alignment: BarChartAlignment.spaceAround,
                   maxY: _dailyRevenueData.isNotEmpty
-                      ? _dailyRevenueData.map((group) => group.barRods.first.toY).reduce((a, b) => a > b ? a : b) * 1.2
+                      ? _dailyRevenueData
+                      .map((group) => group.barRods.first.toY)
+                      .reduce((a, b) => a > b ? a : b) *
+                      1.2
                       : 100,
                 ),
               ),
             ),
             const SizedBox(height: 20),
-
             Text(
               'Chi tiết giao dịch:',
               style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
@@ -327,7 +347,8 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                   return Card(
                     margin: const EdgeInsets.symmetric(vertical: 8.0),
                     elevation: 2,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
                     child: Padding(
                       padding: const EdgeInsets.all(12.0),
                       child: Column(
@@ -335,17 +356,20 @@ class _AdminStatisticsScreenState extends State<AdminStatisticsScreen> {
                         children: [
                           Text(
                             'Sản phẩm:\n${transaction['itemsSummary']}',
-                            style: GoogleFonts.poppins(fontSize: 15, fontWeight: FontWeight.bold),
+                            style: GoogleFonts.poppins(
+                                fontSize: 15, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 5),
                           Text(
                             'Tổng tiền: ${NumberFormat('#,##0', 'vi_VN').format(transaction['totalAmount'])} VNĐ',
-                            style: GoogleFonts.poppins(fontSize: 15, color: Colors.deepOrange),
+                            style: GoogleFonts.poppins(
+                                fontSize: 15, color: Colors.deepOrange),
                           ),
                           const SizedBox(height: 5),
                           Text(
                             'Thời gian: ${DateFormat('dd/MM/yyyy HH:mm:ss').format(transaction['timestamp'])}',
-                            style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey[700]),
+                            style: GoogleFonts.poppins(
+                                fontSize: 13, color: Colors.grey[700]),
                           ),
                         ],
                       ),

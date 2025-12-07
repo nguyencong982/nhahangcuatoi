@@ -7,7 +7,9 @@ import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 
 class AdminMenuScreen extends StatefulWidget {
-  const AdminMenuScreen({super.key});
+  final Restaurant restaurant;
+
+  const AdminMenuScreen({super.key, required this.restaurant});
 
   @override
   State<AdminMenuScreen> createState() => _AdminMenuScreenState();
@@ -17,15 +19,20 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
+  CollectionReference get _menuItemsRef => _firestore
+      .collection('restaurants')
+      .doc(widget.restaurant.id)
+      .collection('menuItems');
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Quản lý Menu', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        title: Text('Quản lý Menu: ${widget.restaurant.name}', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
         centerTitle: true,
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: _firestore.collection('menuItems').orderBy('name').snapshots(),
+        stream: _menuItemsRef.orderBy('name').snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -36,7 +43,7 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
             return Center(
               child: Text(
-                'Chưa có món ăn nào trong menu.',
+                'Chưa có món ăn nào trong menu của nhà hàng này.',
                 style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey),
               ),
             );
@@ -49,6 +56,12 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
             itemCount: menuItems.length,
             itemBuilder: (context, index) {
               final item = menuItems[index];
+
+              String discountText = '';
+              if (item.discountPercentage != null && item.discountPercentage! > 0) {
+                discountText = ' - Giảm ${item.discountPercentage}%';
+              }
+
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 8.0),
                 elevation: 2,
@@ -66,9 +79,14 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                     ),
                   )
                       : const Icon(Icons.fastfood, size: 40, color: Colors.grey),
-                  title: Text(item.name, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                  title: Text('${item.name}$discountText', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: item.discountPercentage != null && item.discountPercentage! > 0 ? Colors.red.shade700 : Colors.black)),
                   subtitle: FutureBuilder<DocumentSnapshot>(
-                    future: _firestore.collection('categories').doc(item.categoryId).get(),
+                    future: _firestore
+                        .collection('restaurants')
+                        .doc(widget.restaurant.id)
+                        .collection('categories')
+                        .doc(item.categoryId)
+                        .get(),
                     builder: (context, categorySnapshot) {
                       String categoryName = 'Đang tải...';
                       if (categorySnapshot.connectionState == ConnectionState.done && categorySnapshot.hasData && categorySnapshot.data!.exists) {
@@ -115,6 +133,9 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
     final TextEditingController nameController = TextEditingController(text: item?.name);
     final TextEditingController descriptionController = TextEditingController(text: item?.description);
     final TextEditingController priceController = TextEditingController(text: item?.price.toString());
+
+    final TextEditingController discountController = TextEditingController(text: item?.discountPercentage?.toString() ?? '0');
+
     String? selectedCategoryId = item?.categoryId;
     File? _pickedImageFile;
     String? _currentImageUrl = item?.imageUrl;
@@ -157,6 +178,16 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                       decoration: const InputDecoration(labelText: 'Giá (VNĐ)'),
                       keyboardType: TextInputType.number,
                     ),
+
+                    TextField(
+                      controller: discountController,
+                      decoration: const InputDecoration(
+                        labelText: 'Giảm giá (%)',
+                        hintText: '0 - 100',
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+
                     const SizedBox(height: 10),
                     _pickedImageFile != null
                         ? Image.file(_pickedImageFile!, height: 100, width: 100, fit: BoxFit.cover)
@@ -172,7 +203,12 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                     ),
                     const SizedBox(height: 10),
                     StreamBuilder<QuerySnapshot>(
-                      stream: _firestore.collection('categories').orderBy('order').snapshots(),
+                      stream: _firestore
+                          .collection('restaurants')
+                          .doc(widget.restaurant.id)
+                          .collection('categories')
+                          .orderBy('order')
+                          .snapshots(),
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) {
                           return const CircularProgressIndicator();
@@ -232,6 +268,15 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                       return;
                     }
 
+                    final int? discount = int.tryParse(discountController.text);
+                    if (discount == null || discount < 0 || discount > 100) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Giảm giá không hợp lệ (phải là số nguyên từ 0 đến 100).')),
+                      );
+                      return;
+                    }
+
+
                     String finalImageUrl = _currentImageUrl ?? '';
 
                     if (_pickedImageFile != null) {
@@ -261,8 +306,10 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                       }
                     }
 
+                    final menuItemDocRef = _menuItemsRef.doc(item?.id);
+
                     final newMenuItem = MenuItem(
-                      id: item?.id ?? _firestore.collection('menuItems').doc().id,
+                      id: item?.id ?? menuItemDocRef.id,
                       name: nameController.text,
                       description: descriptionController.text.isEmpty ? null : descriptionController.text,
                       price: price,
@@ -270,16 +317,19 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
                       categoryId: selectedCategoryId!,
                       isAvailable: item?.isAvailable ?? true,
                       order: item?.order ?? 0,
+                      averageRating: item?.averageRating ?? 0.0,
+                      totalReviews: item?.totalReviews ?? 0,
+                      discountPercentage: discount,
                     );
 
                     try {
                       if (item == null) {
-                        await _firestore.collection('menuItems').doc(newMenuItem.id).set(newMenuItem.toFirestore());
+                        await _menuItemsRef.doc(newMenuItem.id).set(newMenuItem.toFirestore());
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Đã thêm món ăn mới.')),
                         );
                       } else {
-                        await _firestore.collection('menuItems').doc(newMenuItem.id).update(newMenuItem.toFirestore());
+                        await _menuItemsRef.doc(newMenuItem.id).update(newMenuItem.toFirestore());
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('Đã cập nhật món ăn.')),
                         );
@@ -303,7 +353,6 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
     );
   }
 
-  // Xác nhận xóa món ăn
   void _confirmDeleteMenuItem(BuildContext context, String itemId) {
     showDialog(
       context: context,
@@ -320,7 +369,7 @@ class _AdminMenuScreenState extends State<AdminMenuScreen> {
           ElevatedButton(
             onPressed: () async {
               try {
-                await _firestore.collection('menuItems').doc(itemId).delete();
+                await _menuItemsRef.doc(itemId).delete();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Đã xóa món ăn.')),
                 );

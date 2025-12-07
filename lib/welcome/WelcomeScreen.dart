@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:menufood/auth/customer_login_screen.dart';
-import 'choice_screen.dart';
+import 'package:menufood/welcome/choice_screen.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -29,9 +29,8 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
     _opacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_animationController);
     _lottieAssetFuture = _loadLottieAsset();
 
-    _animationController.forward().then((_) {
-      _checkLoginStatusAndNavigate();
-    });
+    _animationController.forward();
+    _checkLoginStatusAndNavigate();
   }
 
   Future<String> _loadLottieAsset() async {
@@ -39,12 +38,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
       final String data = await rootBundle.loadString('assets/lottie/dPn6b5HNKF.json');
       return data;
     } catch (e) {
-      rethrow;
+      return Future.error('Lỗi tải tài sản');
     }
   }
 
   void _checkLoginStatusAndNavigate() async {
-    await Future.delayed(const Duration(seconds: 1));
+    await Future.delayed(const Duration(milliseconds: 1500));
 
     if (mounted) {
       User? user = FirebaseAuth.instance.currentUser;
@@ -117,7 +116,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                                     ],
                                   );
                                 } else {
-                                  return const Center(child: CircularProgressIndicator());
+                                  return const Center(child: CircularProgressIndicator(color: Colors.white,));
                                 }
                               },
                             ),

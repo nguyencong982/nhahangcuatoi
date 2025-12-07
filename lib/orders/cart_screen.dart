@@ -8,7 +8,10 @@ import 'package:menufood/shared/models.dart';
 import 'package:flutter/gestures.dart';
 import 'package:intl/intl.dart';
 import 'package:menufood/orders/address_selection_screen.dart';
+import 'ManualAddressInputScreen.dart';
 import 'package:menufood/home/voucher_screen.dart';
+import 'package:menufood/home/nearby_screen.dart';
+import 'package:menufood/shared/menu_screen.dart';
 
 class CartScreen extends StatefulWidget {
   final String restaurantId;
@@ -23,6 +26,7 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   Restaurant? _currentRestaurant;
   bool _isLoadingRestaurant = true;
+  String? _currentUserName;
   final TextEditingController _customerNotesController = TextEditingController();
   final TextEditingController _deliveryAddressController = TextEditingController();
   final TextEditingController _floorUnitController = TextEditingController();
@@ -39,9 +43,12 @@ class _CartScreenState extends State<CartScreen> {
   void initState() {
     super.initState();
     _fetchRestaurantDetails();
+    _fetchCustomerName();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      cartProvider.setRestaurantAndTable(widget.restaurantId, widget.tableNumber);
+
+      cartProvider.setRestaurantForDelivery(widget.restaurantId);
+
       _customerNotesController.text = cartProvider.customerNotes ?? '';
       _deliveryAddressController.text = cartProvider.deliveryAddress ?? '';
     });
@@ -70,13 +77,26 @@ class _CartScreenState extends State<CartScreen> {
         setState(() {
           _isLoadingRestaurant = false;
         });
-        print('Không tìm thấy nhà hàng với ID: ${widget.restaurantId}');
       }
     } catch (e) {
       setState(() {
         _isLoadingRestaurant = false;
       });
-      print('Lỗi khi tải thông tin nhà hàng: $e');
+    }
+  }
+
+  Future<void> _fetchCustomerName() async {
+    final userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId == null) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
+      if (doc.exists) {
+        setState(() {
+          _currentUserName = doc.data()?['fullName'] as String?;
+        });
+      }
+    } catch (e) {
     }
   }
 
@@ -109,129 +129,214 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  void _showAddressSelectionScreen(CartProvider cart) async {
-    final selectedAddress = await Navigator.push(
+  void _navigateToMapSelection(CartProvider cart) async {
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AddressSelectionScreen(
           initialAddress: cart.deliveryAddress,
+          initialPhoneNumber: cart.customerPhoneNumber,
         ),
       ),
     );
-    if (selectedAddress != null && selectedAddress is String) {
-      setState(() {
-        _deliveryAddressController.text = selectedAddress;
-        cart.setDeliveryAddress(selectedAddress);
-      });
+
+    if (result != null && result is Map<String, dynamic>) {
+      final selectedAddress = result['address'] as String?;
+      final selectedLocation = result['location'] as GeoPoint?;
+      final selectedPhoneNumber = result['phoneNumber'] as String?;
+
+      if (selectedAddress != null && selectedLocation != null) {
+        setState(() {
+          cart.setDeliveryInfo(selectedAddress, selectedLocation);
+          _deliveryAddressController.text = selectedAddress;
+
+          if (selectedPhoneNumber != null && selectedPhoneNumber.isNotEmpty) {
+            cart.setCustomerPhoneNumber(selectedPhoneNumber);
+          }
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lỗi: Dữ liệu vị trí không đầy đủ.')),
+        );
+      }
+    }
+  }
+  void _navigateToManualInput(CartProvider cart) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ManualAddressInputScreen(
+          initialAddress: cart.deliveryAddress,
+          initialPhoneNumber: cart.customerPhoneNumber,
+        ),
+      ),
+    );
+
+    if (result != null && result is Map<String, dynamic>) {
+      final String? selectedAddress = result['address'] as String?;
+      final GeoPoint? selectedLocation = result['location'] as GeoPoint?;
+      final String? selectedPhoneNumber = result['phoneNumber'] as String?;
+      final String? selectedNotes = result['notes'] as String?;
+
+      if (selectedAddress != null) {
+        setState(() {
+          cart.setDeliveryInfo(selectedAddress, selectedLocation);
+          _deliveryAddressController.text = selectedAddress;
+
+          if (selectedPhoneNumber != null) {
+            cart.setCustomerPhoneNumber(selectedPhoneNumber);
+          }
+
+          if (selectedNotes != null) {
+            cart.setCustomerNotes(selectedNotes);
+          }
+        });
+      }
     }
   }
 
-  Future<void> _showVoucherSelectionDialog() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng đăng nhập để xem voucher.')),
-      );
-      return;
-    }
+  void _showVoucherSelectionScreen() async {
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
 
-    final savedVouchersSnapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .collection('userVouchers')
-        .get();
+    final selectedVoucher = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const VoucherScreen(orderType: 'delivery', showApplyButton: true),
+      ),
+    );
 
-    final List<Voucher> savedVouchers = savedVouchersSnapshot.docs
-        .map((doc) => Voucher.fromFirestore(doc))
-        .toList();
-
-    final List<Voucher> applicableVouchers = savedVouchers.where((voucher) {
-      if (voucher.isForShipping && _orderType != 'delivery') {
-        return false;
+    if (selectedVoucher != null && selectedVoucher is Voucher) {
+      await cartProvider.applyVoucher(selectedVoucher);
+      setState(() {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Đã áp dụng voucher ${selectedVoucher.code} thành công!')),
+        );
       }
-      if (voucher.type != 'all' && voucher.type != _orderType) {
-        return false;
-      }
-      return true;
-    }).toList();
-
-    if (applicableVouchers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bạn chưa có voucher nào phù hợp với đơn hàng này.')),
-      );
-      return;
     }
+  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        final cartProvider = Provider.of<CartProvider>(ctx);
-        return AlertDialog(
-          title: Text('Chọn Voucher', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: applicableVouchers.length,
-              itemBuilder: (context, index) {
-                final voucher = applicableVouchers[index];
-                final bool canApply = cartProvider.checkVoucherValidity(voucher);
-                return ListTile(
-                  title: Text(voucher.code, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                  subtitle: Text(voucher.description, style: GoogleFonts.poppins(color: Colors.grey[600])),
-                  trailing: ElevatedButton(
-                    onPressed: canApply
-                        ? () {
-                      cartProvider.applyVoucher(voucher);
-                      Navigator.of(ctx).pop();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Đã áp dụng voucher thành công!')),
-                      );
-                    }
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: canApply ? Colors.orange : Colors.grey,
-                    ),
+  Widget _buildPromotionsSection(CartProvider cart) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+      ),
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Ưu đãi', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          if (cart.appliedVoucher != null)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+              decoration: BoxDecoration(
+                color: Colors.lightGreen[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Expanded(
                     child: Text(
-                      'Áp dụng',
-                      style: GoogleFonts.poppins(color: Colors.white),
+                      'Đã áp dụng: ${cart.appliedVoucher!.code}',
+                      style: GoogleFonts.poppins(color: Colors.green, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                );
-              },
+                  TextButton(
+                    onPressed: () {
+                      cart.removeVoucher();
+                      setState(() {});
+                    },
+                    child: Text('Hủy', style: GoogleFonts.poppins(color: Colors.red)),
+                  )
+                ],
+              ),
+            )
+          else
+            GestureDetector(
+              onTap: _showVoucherSelectionScreen,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_offer, color: Colors.orange),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Áp dụng ưu đãi để được giảm giá',
+                        style: GoogleFonts.poppins(color: Colors.orange, fontWeight: FontWeight.w500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                  ],
+                ),
+              ),
             ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const VoucherScreen(orderType: 'delivery', showApplyButton: false),
+                ),
+              );
+            },
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text('>>Xem thêm ưu đãi tại đây nhé!', style: GoogleFonts.poppins(color: Colors.blue)),
+            ),
+            style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: Text('Đóng', style: GoogleFonts.poppins()),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
   Future<void> _placeOrder() async {
     final cart = Provider.of<CartProvider>(context, listen: false);
-    if (cart.items.isEmpty) {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
+    if (cart.items.isEmpty || currentUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Giỏ hàng của bạn đang trống!')),
       );
       return;
     }
 
-    if (cart.selectedDeliveryOption == null || cart.deliveryAddress == null || cart.deliveryAddress!.isEmpty) {
+    if (_deliveryAddressController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Vui lòng chọn tùy chọn giao hàng và nhập địa chỉ.')),
+        const SnackBar(content: Text('Vui lòng nhập địa chỉ giao hàng.')),
       );
       return;
     }
+
+    if (cart.selectedDeliveryOption == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vui lòng chọn tùy chọn giao hàng.')),
+      );
+      return;
+    }
+
+    cart.setDeliveryInfo(_deliveryAddressController.text, cart.deliveryLocation);
 
     try {
       await cart.placeOrder(
         customerNotes: _customerNotesController.text.isEmpty ? null : _customerNotesController.text,
         orderType: _orderType,
+        customerId: currentUserId,
+        customerName: _currentUserName ?? 'Khách hàng',
       );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Đơn hàng của bạn đã được đặt thành công!')),
@@ -271,17 +376,7 @@ class _CartScreenState extends State<CartScreen> {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                Container(
-                  color: Colors.orange[50],
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.delivery_dining, color: Colors.orange),
-                      const SizedBox(width: 8),
-                      Text(orderTypeDisplay, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange)),
-                    ],
-                  ),
-                ),
+                _buildOrderTypeSection(context),
                 const SizedBox(height: 10),
                 if (cart.items.isEmpty)
                   Padding(
@@ -327,6 +422,58 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
+  void _navigateToNearbyScreen() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const NearbyScreen()),
+    );
+    if (result != null && result is Restaurant) {
+      final cartProvider = Provider.of<CartProvider>(context, listen: false);
+      setState(() {
+        _currentRestaurant = result;
+      });
+      cartProvider.setRestaurantForDelivery(_currentRestaurant!.id);
+      cartProvider.clearCart();
+
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => MenuScreen(restaurantId: _currentRestaurant!.id),
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildOrderTypeSection(BuildContext context) {
+    return Container(
+      color: Colors.orange[50],
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.delivery_dining, color: Colors.orange),
+              const SizedBox(width: 8),
+              Text(
+                'Giao hàng từ: ${_currentRestaurant?.name ?? 'Đang tải...'}',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.orange),
+              ),
+            ],
+          ),
+          TextButton(
+            onPressed: _navigateToNearbyScreen,
+            child: Text(
+              'Thay đổi',
+              style: GoogleFonts.poppins(color: Colors.blue),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCartItemsSection(CartProvider cart) {
     return Container(
       decoration: const BoxDecoration(
@@ -345,9 +492,16 @@ class _CartScreenState extends State<CartScreen> {
               ),
               TextButton(
                 onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Tính năng "Thêm món" đang được phát triển.')),
-                  );
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => MenuScreen(
+                        restaurantId: widget.restaurantId,
+                        tableNumber: null,
+                      ),
+                    ),
+                  ).then((_) {
+                    setState(() {});
+                  });
                 },
                 child: Text('Thêm món', style: GoogleFonts.poppins(color: Colors.green)),
               ),
@@ -482,6 +636,9 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildDeliveryInfoSection(CartProvider cart) {
+    final bool isAddressSet = cart.deliveryAddress != null && cart.deliveryAddress!.isNotEmpty;
+    final bool isManualAddress = cart.deliveryLocation == null;
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -495,26 +652,58 @@ class _CartScreenState extends State<CartScreen> {
             style: GoogleFonts.poppins(color: Colors.orange, fontSize: 13, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 10),
+
           ListTile(
-            leading: const Icon(Icons.location_on, color: Colors.red),
-            title: Flexible(
-              child: Text(
-                cart.deliveryAddress == null || (cart.deliveryAddress?.isEmpty ?? true)
-                    ? 'Chạm để nhập địa chỉ hoặc định vị'
-                    : cart.deliveryAddress!,
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  color: cart.deliveryAddress == null || (cart.deliveryAddress?.isEmpty ?? true)
-                      ? Colors.grey
-                      : Colors.black,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(
+              isAddressSet ? Icons.location_on : Icons.map_outlined,
+              color: isManualAddress ? Colors.orange : Colors.red,
             ),
+            title: Text(
+              isAddressSet
+                  ? cart.deliveryAddress!
+                  : 'Chạm để chọn hoặc nhập địa chỉ',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                color: isAddressSet ? Colors.black : Colors.grey,
+                fontWeight: isManualAddress ? FontWeight.w600 : FontWeight.normal,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: isManualAddress && isAddressSet
+                ? Text('Địa chỉ nhập thủ công', style: GoogleFonts.poppins(color: Colors.red.shade700, fontSize: 12))
+                : null,
             trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-            onTap: () => _showAddressSelectionScreen(cart),
+            onTap: () {
+              showModalBottomSheet(
+                context: context,
+                builder: (context) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.map, color: Colors.blue),
+                      title: Text('Chọn trên Bản đồ', style: GoogleFonts.poppins()),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _navigateToMapSelection(cart);
+                      },
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.edit_location, color: Colors.green),
+                      title: Text('Nhập địa chỉ Thủ công', style: GoogleFonts.poppins()),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _navigateToManualInput(cart);
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
+          const Divider(),
+
           Row(
             children: [
               Expanded(
@@ -527,7 +716,6 @@ class _CartScreenState extends State<CartScreen> {
                     border: OutlineInputBorder(),
                   ),
                   onChanged: (value) {
-                    print('Số tầng/căn hộ: $value');
                   },
                 ),
               ),
@@ -561,6 +749,7 @@ class _CartScreenState extends State<CartScreen> {
                   fit: BoxFit.scaleDown,
                   child: Text('Thêm', style: GoogleFonts.poppins(color: Colors.blue)),
                 ),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
               ),
             ],
           ),
@@ -611,13 +800,13 @@ class _CartScreenState extends State<CartScreen> {
         children: [
           Icon(icon, color: Colors.blueGrey),
           const SizedBox(width: 8),
-          Flexible(
-            child: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis,),
+          Expanded(
+            child: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
           ),
           if (subtitle.isNotEmpty) ...[
             const SizedBox(width: 5),
-            Flexible(
-              child: Text('• $subtitle', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis,),
+            Expanded(
+              child: Text('• $subtitle', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
             ),
             const SizedBox(width: 5),
             const Icon(Icons.info_outline, size: 16, color: Colors.grey),
@@ -693,89 +882,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildPromotionsSection(CartProvider cart) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-      ),
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Ưu đãi', style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          if (cart.appliedVoucher != null)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-              decoration: BoxDecoration(
-                color: Colors.lightGreen[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.green),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Đã áp dụng: ${cart.appliedVoucher!.code}',
-                      style: GoogleFonts.poppins(color: Colors.green, fontWeight: FontWeight.w500),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: cart.removeVoucher,
-                    child: Text('Hủy', style: GoogleFonts.poppins(color: Colors.red)),
-                  )
-                ],
-              ),
-            )
-          else
-            GestureDetector(
-              onTap: _showVoucherSelectionDialog,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.local_offer, color: Colors.orange),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Áp dụng ưu đãi để được giảm giá',
-                        style: GoogleFonts.poppins(color: Colors.orange, fontWeight: FontWeight.w500),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                  ],
-                ),
-              ),
-            ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const VoucherScreen()),
-              );
-            },
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text('>>Xem thêm ưu đãi tại đây nhé!', style: GoogleFonts.poppins(color: Colors.blue)),
-            ),
-            style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildTotalAndOrderButtonSection(CartProvider cart) {
     return Container(
       decoration: BoxDecoration(
@@ -830,7 +936,7 @@ class _CartScreenState extends State<CartScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Flexible(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -841,7 +947,7 @@ class _CartScreenState extends State<CartScreen> {
                   ],
                 ),
               ),
-              Flexible(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -859,29 +965,26 @@ class _CartScreenState extends State<CartScreen> {
                         child: Text(
                           _formatCurrency(cart.subtotalAmount + cart.deliveryFee),
                           style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey, decoration: TextDecoration.lineThrough),
-                          maxLines: 1,
                         ),
                       ),
                   ],
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ElevatedButton(
-            onPressed: _placeOrder,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.deepOrange,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 50),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+              const SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: cart.items.isEmpty ? null : _placeOrder,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: cart.items.isEmpty ? Colors.grey : Colors.orange,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: Text(
+                  'Đặt hàng',
+                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ),
-            ),
-            child: Text(
-              'Đặt đơn',
-              style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
+            ],
           ),
         ],
       ),

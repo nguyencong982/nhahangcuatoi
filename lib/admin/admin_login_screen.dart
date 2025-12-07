@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:menufood/admin/admin_dashboard_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -16,27 +17,26 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  static const String _adminEmail = 'cong0939704754@gmail.com';
-
   @override
   void initState() {
     super.initState();
-    _checkCurrentUser();
+    _checkCurrentUserRole();
   }
 
-  void _checkCurrentUser() {
+  void _checkCurrentUserRole() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      if (user.email == _adminEmail) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      if (userDoc.exists && userDoc.data()?['role'] == 'admin') {
+        if (mounted) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
             );
-          }
-        });
+          });
+        }
       } else {
-        FirebaseAuth.instance.signOut();
+        await FirebaseAuth.instance.signOut();
       }
     }
   }
@@ -60,17 +60,21 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         password: _passwordController.text.trim(),
       );
 
-      if (userCredential.user != null && userCredential.user!.email == _adminEmail) {
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
-          );
+      if (userCredential.user != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(userCredential.user!.uid).get();
+
+        if (userDoc.exists && userDoc.data()?['role'] == 'admin') {
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => const AdminDashboardScreen()),
+            );
+          }
+        } else {
+          await FirebaseAuth.instance.signOut();
+          setState(() {
+            _errorMessage = 'Bạn không có quyền truy cập quản trị.';
+          });
         }
-      } else {
-        await FirebaseAuth.instance.signOut();
-        setState(() {
-          _errorMessage = 'Bạn không có quyền truy cập quản trị.';
-        });
       }
     } on FirebaseAuthException catch (e) {
       String message;
