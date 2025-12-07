@@ -30,4 +30,4 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_TIK_CLONE_F03B1 }}
           channelId: live
           projectId: tik-clone-f03b1
- 
+ # Fix force deploy
