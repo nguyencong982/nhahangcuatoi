@@ -11,7 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
+      # THÊM BƯỚC NÀY: Cài đặt Node.js
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18' # Đảm bảo Node.js hoạt động ổn định
+
       # BƯỚC MỚI 1: Cài đặt Flutter SDK
       - uses: subosito/flutter-action@v2
         with:
@@ -19,9 +24,10 @@ jobs:
           channel: 'stable'
 
       # BƯỚC MỚI 2: Lấy các phụ thuộc của Flutter
-      - run: flutter pub get 
+      # Thêm cờ `--no-example` và `--force` để giải quyết lỗi pub get/SDK
+      - run: flutter pub get --no-example --force
 
-      # BƯỚC BUILD (Đã có, nhưng giờ sẽ chạy được)
+      # BƯỚC BUILD (Đã có, giờ sẽ chạy được)
       - run: flutter build web --release
       
       - uses: FirebaseExtended/action-hosting-deploy@v0
