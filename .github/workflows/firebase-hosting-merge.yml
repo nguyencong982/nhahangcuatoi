@@ -15,7 +15,7 @@ jobs:
       # BƯỚC MỚI 1: Cài đặt Flutter SDK
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '2.2.0' # THAY BẰNG PHIÊN BẢN FLUTTER CỦA BẠN
+          flutter-version: '3.19.0'
           channel: 'stable'
 
       # BƯỚC MỚI 2: Lấy các phụ thuộc của Flutter
