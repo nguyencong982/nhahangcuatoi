@@ -1,1 +1,58 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"tik-clone-f03b1","appId":"1:1096129874429:android:797802013c27ac4b3bf194","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"tik-clone-f03b1","configurations":{"android":"1:1096129874429:android:797802013c27ac4b3bf194","ios":"1:1096129874429:ios:719d308007f1659e3bf194","macos":"1:1096129874429:ios:719d308007f1659e3bf194","web":"1:1096129874429:web:01a32696c47705b03bf194","windows":"1:1096129874429:web:027e5a09c10dc1dc3bf194"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "tik-clone-f03b1",
+          "appId": "1:1096129874429:android:797802013c27ac4b3bf194",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "tik-clone-f03b1",
+          "configurations": {
+            "android": "1:1096129874429:android:797802013c27ac4b3bf194",
+            "ios": "1:1096129874429:ios:719d308007f1659e3bf194",
+            "macos": "1:1096129874429:ios:719d308007f1659e3bf194",
+            "web": "1:1096129874429:web:01a32696c47705b03bf194",
+            "windows": "1:1096129874429:web:027e5a09c10dc1dc3bf194"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
