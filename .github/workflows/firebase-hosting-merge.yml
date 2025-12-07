@@ -25,7 +25,7 @@ jobs:
 
       # BƯỚC MỚI 2: Lấy các phụ thuộc của Flutter
       # Thêm cờ `--no-example` và `--force` để giải quyết lỗi pub get/SDK
-      - run: flutter pub get --no-example --force
+      - run: flutter pub get --no-example
 
       # BƯỚC BUILD (Đã có, giờ sẽ chạy được)
       - run: flutter build web --release
