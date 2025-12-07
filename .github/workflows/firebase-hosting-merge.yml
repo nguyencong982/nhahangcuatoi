@@ -11,10 +11,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      # BƯỚC MỚI 1: Cài đặt Flutter SDK
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '2.2.0' # THAY BẰNG PHIÊN BẢN FLUTTER CỦA BẠN
+          channel: 'stable'
+
+      # BƯỚC MỚI 2: Lấy các phụ thuộc của Flutter
+      - run: flutter pub get 
+
+      # BƯỚC BUILD (Đã có, nhưng giờ sẽ chạy được)
       - run: flutter build web --release
+      
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_TIK_CLONE_F03B1 }}
           channelId: live
           projectId: tik-clone-f03b1
+ 
