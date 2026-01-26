@@ -39,7 +39,7 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyDGdZWZn_RQDA-jrEbUHYvx0rengg9RkYc',
+    apiKey: 'AIzaSyAtBQeS2K3bc6v-CUP0IEWX12uQY_qLVFM',
     appId: '1:1096129874429:web:01a32696c47705b03bf194',
     messagingSenderId: '1096129874429',
     projectId: 'tik-clone-f03b1',
@@ -49,7 +49,7 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyADDKfWY1s18qVUxr7ghaKK-Zy-6XzjXiA',
+    apiKey: 'AIzaSyAySbahYLmRHAAiXnsPv814TbHOwKxvxpI',
     appId: '1:1096129874429:android:797802013c27ac4b3bf194',
     messagingSenderId: '1096129874429',
     projectId: 'tik-clone-f03b1',
@@ -57,29 +57,29 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyCHG7EcG0lGmmxGocFEpIfeng_4Q3V902U',
+    apiKey: 'AIzaSyDEsqRdlW0MNC2unDM8KWreHF2z44FsekU',
     appId: '1:1096129874429:ios:719d308007f1659e3bf194',
     messagingSenderId: '1096129874429',
     projectId: 'tik-clone-f03b1',
     storageBucket: 'tik-clone-f03b1.firebasestorage.app',
-    androidClientId: '1096129874429-lusq7uaeqib7a690ouu9qmrqv6bd47ur.apps.googleusercontent.com',
+    androidClientId: '1096129874429-e09ukirh1kr4akhank6nk8utk9mn45nc.apps.googleusercontent.com',
     iosClientId: '1096129874429-m3a6thn92c4r1i9hn847i20je2jbsaep.apps.googleusercontent.com',
     iosBundleId: 'com.example.menufood',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyCHG7EcG0lGmmxGocFEpIfeng_4Q3V902U',
+    apiKey: 'AIzaSyDEsqRdlW0MNC2unDM8KWreHF2z44FsekU',
     appId: '1:1096129874429:ios:719d308007f1659e3bf194',
     messagingSenderId: '1096129874429',
     projectId: 'tik-clone-f03b1',
     storageBucket: 'tik-clone-f03b1.firebasestorage.app',
-    androidClientId: '1096129874429-lusq7uaeqib7a690ouu9qmrqv6bd47ur.apps.googleusercontent.com',
+    androidClientId: '1096129874429-e09ukirh1kr4akhank6nk8utk9mn45nc.apps.googleusercontent.com',
     iosClientId: '1096129874429-m3a6thn92c4r1i9hn847i20je2jbsaep.apps.googleusercontent.com',
     iosBundleId: 'com.example.menufood',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyDGdZWZn_RQDA-jrEbUHYvx0rengg9RkYc',
+    apiKey: 'AIzaSyCH1ZxCSH12mX3dUlcWXlQoDn5g0ueRxZ0',
     appId: '1:1096129874429:web:027e5a09c10dc1dc3bf194',
     messagingSenderId: '1096129874429',
     projectId: 'tik-clone-f03b1',

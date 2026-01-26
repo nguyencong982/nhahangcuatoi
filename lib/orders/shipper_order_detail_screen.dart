@@ -10,6 +10,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:menufood/chat/chat_screen.dart';
 
 class ShipperOrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -74,6 +75,28 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
 
     return earthRadius * c;
   }
+
+  void _navigateToChat() {
+    if (_customerDetails == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đang tải thông tin khách hàng, vui lòng đợi...')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          orderId: widget.orderId,
+          customerId: _customerDetails!.id ?? '',
+          customerName: _customerDetails!.fullName ?? 'Khách hàng',
+          shipperId: _shipperId ?? '',
+        ),
+      ),
+    );
+  }
+
 
   void _updatePolylinesForNavigation(LatLng currentLocation) {
     if (polylineCoordinates.isEmpty) return;
@@ -229,7 +252,7 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
 
         setState(() {
           _currentOrderStatus = order.status;
-          _customerAddress = order.deliveryAddress; // Lấy địa chỉ chuỗi
+          _customerAddress = order.deliveryAddress;
         });
 
         final customerId = order.userId;
@@ -244,12 +267,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
 
         final customerLocationData = order.deliveryLocation;
         final orderType = order.orderType;
-
-        // BỎ KIỂM TRA BẮT BUỘC CÓ VỊ TRÍ GPS (CHO PHÉP ĐỊA CHỈ THỦ CÔNG)
-        // if (orderType == 'delivery' && customerLocationData == null) {
-        //   throw 'Đơn hàng giao hàng nhưng thiếu dữ liệu vị trí khách hàng.';
-        // }
-
         _customerLocation = customerLocationData != null
             ? LatLng(customerLocationData.latitude, customerLocationData.longitude)
             : null;
@@ -302,11 +319,9 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
     if (_currentOrderStatus == 'picking up') {
       endPoint = _restaurantLocation;
     } else if (_currentOrderStatus == 'in transit') {
-      // XỬ LÝ ĐƠN HÀNG THỦ CÔNG: KHÔNG TÍNH ROUTE NẾU THIẾU TỌA ĐỘ
       if (_customerLocation != null) {
         endPoint = _customerLocation;
       } else {
-        // Địa chỉ thủ công -> thông báo lỗi và không tính lộ trình
         if (_customerAddress != null && _customerAddress!.isNotEmpty) {
           setState(() => _errorLoadingData = 'Địa chỉ khách hàng nhập thủ công. Không thể tính lộ trình trên bản đồ. Địa chỉ: $_customerAddress');
         } else {
@@ -314,7 +329,7 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
         }
 
         mapController?.animateCamera(CameraUpdate.newLatLngZoom(startPoint, 15));
-        return; // Dừng hàm, không tính lộ trình
+        return;
       }
     }
 
@@ -430,7 +445,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
   void _startNavigationMode() {
     if (!mounted || _shipperCurrentLocation == null) return;
 
-    // KIỂM TRA LẠI: KHÔNG CHO PHÉP CHỈ ĐƯỜNG NẾU KHÔNG CÓ TỌA ĐỘ
     if (polylineCoordinates.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Không thể bắt đầu chỉ đường vì thiếu lộ trình hoặc địa chỉ khách hàng là thủ công.')),
@@ -476,13 +490,12 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
       return;
     }
 
-    // Ưu tiên dùng tọa độ, nếu không có thì dùng địa chỉ chuỗi (đã được encode)
     final String query = destination != null
         ? '${destination.latitude},${destination.longitude}'
         : Uri.encodeComponent(addressString!);
 
     final uri = Uri.parse(
-        'google.navigation:q=$query&mode=d'); // mode=d là driving
+        'google.navigation:q=$query&mode=d');
 
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
@@ -540,7 +553,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
         });
       }
 
-      // Tự động tính lộ trình mới sau khi nhận món
       await _setMarkersAndCalculateRoute();
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -638,7 +650,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
             style: GoogleFonts.poppins(fontSize: 15, color: Colors.grey),
           ),
 
-        // HIỂN THỊ ĐỊA CHỈ THỦ CÔNG
         if (_currentOrderStatus == 'in transit' && _customerLocation == null && _customerAddress != null)
           Padding(
             padding: const EdgeInsets.only(top: 8.0),
@@ -716,7 +727,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
     final timeMinutes = (_distanceKm * 3).ceil();
     final isReady = _currentOrderStatus == 'ready';
 
-    // Kiểm tra xem có tọa độ GPS để chỉ đường không
     final canNavigate = (_currentOrderStatus == 'picking up' && _restaurantLocation != null) ||
         (_currentOrderStatus == 'in transit' && _customerLocation != null);
 
@@ -815,7 +825,7 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 15),
                     ),
                   )
-              else // Hiển thị nút GỌI khi địa chỉ thủ công
+              else
                 if (_currentOrderStatus == 'in transit' && customerPhone != null)
                   ElevatedButton.icon(
                     onPressed: () {
@@ -913,6 +923,55 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
                   ),
                   const SizedBox(height: 10),
 
+                  Stack(
+                    alignment: Alignment.topRight,
+                    children: [
+                      FloatingActionButton.small(
+                        heroTag: 'chatButton',
+                        onPressed: _navigateToChat,
+                        backgroundColor: Colors.deepOrange,
+                        foregroundColor: Colors.white,
+                        elevation: 4,
+                        child: const Icon(Icons.chat_bubble_outline),
+                      ),
+                      StreamBuilder<QuerySnapshot>(
+                        stream: FirebaseFirestore.instance
+                            .collection('chats')
+                            .doc(widget.orderId)
+                            .collection('messages')
+                            .where('isRead', isEqualTo: false)
+                            .where('receiverId', isEqualTo: _shipperId)
+                            .snapshots(),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                            return const SizedBox.shrink();
+                          }
+                          return Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              '${snapshot.data!.docs.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
                   FloatingActionButton.small(
                     heroTag: 'centerButton',
                     onPressed: () {
@@ -938,7 +997,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
             ),
           ),
 
-          // 3. Thông báo lỗi
           if (_errorLoadingData != null)
             Positioned(
               top: MediaQuery.of(context).padding.top + 10,
@@ -947,7 +1005,9 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: Card(
-                  color: _errorLoadingData!.contains('Địa chỉ khách hàng nhập thủ công') ? Colors.orange.shade600 : Colors.red.shade600,
+                  color: _errorLoadingData!.contains('Địa chỉ khách hàng nhập thủ công')
+                      ? Colors.orange.shade600
+                      : Colors.red.shade600,
                   elevation: 8,
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
@@ -960,7 +1020,6 @@ class _ShipperOrderDetailScreenState extends State<ShipperOrderDetailScreen> {
               ),
             ),
 
-          // 4. Bottom Sheet
           Positioned(
             left: 0,
             right: 0,

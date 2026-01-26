@@ -18,9 +18,11 @@ import 'package:menufood/welcome/loading_splash_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
 
   if (kIsWeb) {
     await FirebaseAppCheck.instance.activate(
@@ -36,12 +38,11 @@ void main() async {
     );
   }
 
-
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (context) => CartProvider()),
-        ChangeNotifierProvider(create: (context) => FavoriteProvider()..loadFavorites()),
+        ChangeNotifierProvider(create: (_) => CartProvider()),
+        ChangeNotifierProvider(create: (_) => FavoriteProvider()..loadFavorites()),
       ],
       child: const MyApp(),
     ),
